@@ -1,8 +1,8 @@
 {
   "meta": { "version": "PTDL_v2", "update_url": null },
   "exported_at": "2025-08-13T00:00:00-05:00",
-  "name": "King Arthur's Gold (Unified updater, auto-libs, minimal)",
-  "author": "you@example.com",
+  "name": "King Arthur's Gold (By Razi)",
+  "author": "raziphel@gmail.com",
   "description": "Chooses between SteamCMD public or Staging archive. start.sh auto-updates, fetches needed libs, and launches KAG. Minimal variables.",
   "features": null,
   "docker_images": { "Debian (yolk)": "ghcr.io/pterodactyl/yolks:debian" },
