@@ -1,13 +1,11 @@
 {
   "meta": { "version": "PTDL_v2", "update_url": null },
   "exported_at": "2025-08-13T00:00:00-05:00",
-  "name": "King Arthur's Gold (By Razi <3)",
-  "author": "Raziphel@gmail.com",
-  "description": "Runs the KAG server using the uploaded dedicatedserver.sh. No downloads or Steam. Only exposes Extra Startup Flags.",
+  "name": "King Arthur's Gold (Unified updater, auto-libs, minimal)",
+  "author": "you@example.com",
+  "description": "Chooses between SteamCMD public or Staging archive. start.sh auto-updates, fetches needed libs, and launches KAG. Minimal variables.",
   "features": null,
-  "docker_images": {
-    "Debian (yolk)": "ghcr.io/pterodactyl/yolks:debian"
-  },
+  "docker_images": { "Debian (yolk)": "ghcr.io/pterodactyl/yolks:debian" },
   "file_denylist": [],
   "startup": "bash ./start.sh {{STARTUP_FLAGS}}",
   "config": {
@@ -18,15 +16,51 @@
   },
   "scripts": {
     "installation": {
-      "script": "#!/bin/bash\nset -euo pipefail\ncd /mnt/server\n\n# Write a tiny launcher that runs your uploaded dedicated script\ncat > start.sh << 'EOSH'\n#!/bin/bash\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\n# Make sure bundled scripts/binary are executable\nchmod +x KAGdedi dedicatedserver.sh dedicatedserver_shiprekt.sh forceupdate_server.sh 2>/dev/null || true\n# If you later upload newer C++ libs to ./deps64, prefer them\nif [ -d \"./deps64\" ]; then\n  export LD_LIBRARY_PATH=\"./deps64/lib/x86_64-linux-gnu:./deps64/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}\"\nfi\nexec bash ./dedicatedserver.sh \"$@\"\nEOSH\nchmod +x start.sh\n\n# Create minimal autoconfig if you don't already have one\nif [ ! -f autoconfig.cfg ]; then\n  cat > autoconfig.cfg << 'EOF'\nsv_name = KAG Server\nsv_info = Server Description\nsv_maxplayers = 16\nsv_gamemode = CTF\nsv_mapcycle = Base/Maps/mapcycle.cfg\nsv_password = \nsv_rconpassword = \nsv_register = 1\nsv_port = 50301\ncl_port = 50328\nc_write_console_to_disk = 1\nc_write_chat_to_disk = 1\nEOF\nfi\n[ -f Base/Maps/mapcycle.cfg ] || { mkdir -p Base/Maps; echo \"Base/Maps/CTF/Maps/.*.png\" > Base/Maps/mapcycle.cfg; }\n\nexit 0\n",
+      "script": "#!/bin/bash\\nset -euo pipefail\\ncd /mnt/server\\n\\n# --- write start.sh (updates + libs + launch) ---\\ncat > start.sh << 'EOSH'\\n#!/bin/bash\\nset -euo pipefail\\ncd \"$(dirname \"$0\")\"\\n\\n# =====================\\n# Settings from Panel\\n# =====================\\nSRC=\"${UPDATE_SOURCE:-staging}\"              # staging | steam\\nAUTO=\"${AUTO_UPDATE:-1}\"                      # 1=update each start, 0=only if missing\\nSTAGING_URL=\"${STAGING_URL:-https://update.kag2d.com/1/linux32-dedicated-staging-test/kag-linux32-dedicated-staging-test.tar.gz}\"\\nSTEAM_BRANCH=\"${STEAM_BRANCH:-public}\"       # public branch only (no password)\\nFLAGS=(\"$@\")                                    # appended to KAGdedi\\n\\nlog(){ echo \"[kag] $*\"; }\\n\\n# downloader (curl or wget)\\ndl(){ local url=\"$1\" out=\"$2\"; if command -v curl >/dev/null 2>&1; then curl -fsSL \"$url\" -o \"$out\"; else wget -qO \"$out\" \"$url\"; fi; }\\n\\n# extract .deb without needing root\\nextract_deb(){ local deb=\"$1\" tgt=\"$2\"; mkdir -p \"$tgt\"; if command -v dpkg-deb >/dev/null 2>&1; then dpkg-deb -x \"$deb\" \"$tgt\"; return; fi; if command -v ar >/dev/null 2>&1; then tmp=$(mktemp -d); ( cd \"$tmp\" && ar x \"$deb\" >/dev/null 2>&1 ); for tarball in \"$tmp\"/data.tar.*; do case \"$tarball\" in *.xz) tar -xJf \"$tarball\" -C \"$tgt\";; *.gz) tar -xzf \"$tarball\" -C \"$tgt\";; *.zst) tar --use-compress-program=unzstd -xf \"$tarball\" -C \"$tgt\";; esac; done; rm -rf \"$tmp\"; return; fi; log \"ERROR: need dpkg-deb or ar+tar to extract .deb\"; exit 1; }\\n\\n# ELF class detector (no 'file' needed): returns 32 or 64\\nelf_class(){ od -An -t u1 -N5 \"${1}\" | awk '{print $5}'; }\\n\\n# 64-bit C++ runtime (fixes GLIBCXX errors)\\nensure_libs_64(){ local libdir=./deps64/usr/lib/x86_64-linux-gnu; mkdir -p \"$libdir\"; [ -f \"$libdir/libstdc++.so.6\" ] && [ -f \"$libdir/libgcc_s.so.1\" ] && return; log \"Fetching 64-bit libstdc++/libgcc into ./deps64 …\"; tmp=$(mktemp -d); pushd \"$tmp\" >/dev/null; urls=(\\n  http://deb.debian.org/debian/pool/main/g/gcc-12/libstdc++6_12.2.0-14_amd64.deb\\n  http://deb.debian.org/debian/pool/main/g/gcc-12/libgcc-s1_12.2.0-14_amd64.deb\\n  http://deb.debian.org/debian/pool/main/g/gcc-11/libstdc++6_11.2.0-19_amd64.deb\\n  http://deb.debian.org/debian/pool/main/g/gcc-11/libgcc-s1_11.2.0-19_amd64.deb\\n  http://deb.debian.org/debian/pool/main/g/gcc-10/libstdc++6_10.2.1-6_amd64.deb\\n  http://deb.debian.org/debian/pool/main/g/gcc-10/libgcc-s1_10.2.1-6_amd64.deb\\n); for u in \"${urls[@]}\"; do n=\"$(basename \"$u\")\"; dl \"$u\" \"$n\" || true; done; for deb in *.deb; do [ -f \"$deb\" ] || continue; extract_deb \"$deb\" ../deps64; done; popd >/dev/null; rm -rf \"$tmp\"; [ -f \"$libdir/libstdc++.so.6\" ] && [ -f \"$libdir/libgcc_s.so.1\" ] || { log \"ERROR: failed to stage 64-bit libs\"; exit 1; } }\\n\\n# 32-bit loader/libs (if the binary is 32-bit)\\nensure_libs_32(){ [ -f ./deps/lib/ld-linux.so.2 ] && return; log \"Fetching 32-bit loader/libs into ./deps …\"; tmp=$(mktemp -d); pushd \"$tmp\" >/dev/null; urls=(\\n  http://deb.debian.org/debian/pool/main/g/glibc/libc6_2.31-13+deb11u6_i386.deb\\n  http://deb.debian.org/debian/pool/main/g/gcc-10/libstdc++6_10.2.1-6_i386.deb\\n  http://deb.debian.org/debian/pool/main/g/gcc-10/libgcc-s1_10.2.1-6_i386.deb\\n  http://deb.debian.org/debian/pool/main/libx/libx11/libx11-6_1.7.2-1_i386.deb\\n  http://deb.debian.org/debian/pool/main/libx/libxext/libxext6_1.3.3-1.1_i386.deb\\n  http://deb.debian.org/debian/pool/main/libx/libxfixes/libxfixes3_5.0.3-2_i386.deb\\n  http://deb.debian.org/debian/pool/main/libx/libxdamage/libxdamage1_1.1.5-2.1_i386.deb\\n  http://deb.debian.org/debian/pool/main/m/mesa/libgl1_20.3.5-1_i386.deb\\n  http://deb.debian.org/debian/pool/main/z/zlib/zlib1g_1.2.11.dfsg-2+deb11u2_i386.deb\\n); for u in \"${urls[@]}\"; do n=\"$(basename \"$u\")\"; dl \"$u\" \"$n\" || true; done; for deb in *.deb; do [ -f \"$deb\" ] || continue; extract_deb \"$deb\" ../deps; done; popd >/dev/null; rm -rf \"$tmp\"; [ -f ./deps/lib/ld-linux.so.2 ] || { l=$(ls -1 ./deps/lib/i386-linux-gnu/ld-*.so 2>/dev/null | head -n1 || true); [ -n \"$l\" ] && ln -sf \"$l\" ./deps/lib/ld-linux.so.2; } ; [ -f ./deps/lib/ld-linux.so.2 ] || { log \"ERROR: 32-bit loader not found\"; exit 1; } }\\n\\n# Updaters\\nupdate_from_staging(){ if [ \"$AUTO\" = \"1\" ] || [ ! -f ./KAGdedi ]; then log \"Updating from staging archive…\"; tmp=.kag_dl && mkdir -p \"$tmp\"; dl \"$STAGING_URL\" \"$tmp/kag.tgz\"; tar -xzf \"$tmp/kag.tgz\" --strip-components=1 -C .; rm -rf \"$tmp\"; chmod +x ./KAGdedi 2>/dev/null || true; fi }\\nupdate_from_steam(){ if [ \"$AUTO\" = \"1\" ] || [ ! -f ./KAGdedi ]; then log \"Updating from SteamCMD (public)…\"; mkdir -p ./steamcmd && cd ./steamcmd; [ -f ./steamcmd.sh ] || { dl https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz steamcmd_linux.tar.gz; tar -xzf steamcmd_linux.tar.gz; rm -f steamcmd_linux.tar.gz; }; if [ \"$STEAM_BRANCH\" = \"public\" ]; then ./steamcmd.sh +@sSteamCmdForcePlatformType linux +force_install_dir \"$(cd ..; pwd)\" +login anonymous +app_update 219830 validate +quit; else ./steamcmd.sh +@sSteamCmdForcePlatformType linux +force_install_dir \"$(cd ..; pwd)\" +login anonymous +app_update 219830 -beta \"$STEAM_BRANCH\" validate +quit; fi; cd ..; chmod +x ./KAGdedi 2>/dev/null || true; fi }\\n\\n# Ensure files are present/updated\\ncase \"$SRC\" in\\n  staging) update_from_staging;;\\n  steam)   update_from_steam;;\\n  *) log \"Unknown UPDATE_SOURCE='$SRC' (use staging|steam)\"; exit 2;;\\n esac\\n\\n# Pick launch binary\\nBIN=./KAGdedi\\n[ -f \"$BIN\" ] || { log \"KAGdedi not found after update\"; ls -la; exit 127; }\\nchmod +x \"$BIN\" || true\\n\\n# If it's 32-bit, prep i386 libs; if 64-bit, prep 64-bit stdc++\\nCLASS=$(elf_class \"$BIN\" || echo 2)\\nif [ \"$CLASS\" = \"1\" ]; then\\n  ensure_libs_32\\n  exec ./deps/lib/ld-linux.so.2 --library-path ./deps/lib/i386-linux-gnu:./deps/usr/lib/i386-linux-gnu:./deps/lib32:./deps/usr/lib32 \"$BIN\" \"${FLAGS[@]}\"\\nelse\\n  ensure_libs_64\\n  export LD_LIBRARY_PATH=\"./deps64/lib/x86_64-linux-gnu:./deps64/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}\"\\n  exec \"$BIN\" \"${FLAGS[@]}\"\\nfi\\nEOSH\\nchmod +x start.sh\\n\\n# seed minimal config if missing\\nif [ ! -f autoconfig.cfg ]; then\\n  cat > autoconfig.cfg << 'EOF'\\nsv_name = KAG Server\\nsv_info = Server Description\\nsv_maxplayers = 16\\nsv_gamemode = CTF\\nsv_mapcycle = Base/Maps/mapcycle.cfg\\nsv_password = \\nsv_rconpassword = \\nsv_register = 1\\nsv_port = 50301\\ncl_port = 50328\\nc_write_console_to_disk = 1\\nc_write_chat_to_disk = 1\\nEOF\\nfi\\nmkdir -p Base/Maps Mods Security\\n[ -f Base/Maps/mapcycle.cfg ] || echo \"Base/Maps/CTF/Maps/.*.png\" > Base/Maps/mapcycle.cfg\\n\\nexit 0\\n",
       "container": "ghcr.io/pterodactyl/installers:debian",
       "entrypoint": "bash"
     }
   },
   "variables": [
     {
+      "name": "Update Source",
+      "description": "Where to pull from: 'staging' (URL below) or 'steam' (public branch via SteamCMD).",
+      "env_variable": "UPDATE_SOURCE",
+      "default_value": "staging",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|in:staging,steam"
+    },
+    {
+      "name": "Auto Update on Start",
+      "description": "1 = check & update every start, 0 = only if KAGdedi missing.",
+      "env_variable": "AUTO_UPDATE",
+      "default_value": "1",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|boolean"
+    },
+    {
+      "name": "Staging Archive URL",
+      "description": "Direct URL for the staging dedicated build.",
+      "env_variable": "STAGING_URL",
+      "default_value": "https://update.kag2d.com/1/linux32-dedicated-staging-test/kag-linux32-dedicated-staging-test.tar.gz",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|max:500"
+    },
+    {
+      "name": "Steam Branch (public only)",
+      "description": "SteamCMD branch to use. Leave 'public' unless you know a public beta name (no passwords supported here).",
+      "env_variable": "STEAM_BRANCH",
+      "default_value": "public",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|max:64"
+    },
+    {
       "name": "Extra Startup Flags",
-      "description": "Appended to dedicatedserver.sh (usually leave empty).",
+      "description": "Appended to KAGdedi when launching.",
       "env_variable": "STARTUP_FLAGS",
       "default_value": "",
       "user_viewable": true,
