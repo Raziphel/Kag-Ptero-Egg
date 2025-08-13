@@ -1,0 +1,37 @@
+{
+  "meta": { "version": "PTDL_v2", "update_url": null },
+  "exported_at": "2025-08-13T00:00:00-05:00",
+  "name": "King Arthur's Gold (By Razi <3)",
+  "author": "Raziphel@gmail.com",
+  "description": "Runs the KAG server using the uploaded dedicatedserver.sh. No downloads or Steam. Only exposes Extra Startup Flags.",
+  "features": null,
+  "docker_images": {
+    "Debian (yolk)": "ghcr.io/pterodactyl/yolks:debian"
+  },
+  "file_denylist": [],
+  "startup": "bash ./start.sh {{STARTUP_FLAGS}}",
+  "config": {
+    "files": "{}",
+    "startup": "{ \"done\": \"\" }",
+    "logs": "{}",
+    "stop": "exit"
+  },
+  "scripts": {
+    "installation": {
+      "script": "#!/bin/bash\nset -euo pipefail\ncd /mnt/server\n\n# Write a tiny launcher that runs your uploaded dedicated script\ncat > start.sh << 'EOSH'\n#!/bin/bash\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\n# Make sure bundled scripts/binary are executable\nchmod +x KAGdedi dedicatedserver.sh dedicatedserver_shiprekt.sh forceupdate_server.sh 2>/dev/null || true\n# If you later upload newer C++ libs to ./deps64, prefer them\nif [ -d \"./deps64\" ]; then\n  export LD_LIBRARY_PATH=\"./deps64/lib/x86_64-linux-gnu:./deps64/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}\"\nfi\nexec bash ./dedicatedserver.sh \"$@\"\nEOSH\nchmod +x start.sh\n\n# Create minimal autoconfig if you don't already have one\nif [ ! -f autoconfig.cfg ]; then\n  cat > autoconfig.cfg << 'EOF'\nsv_name = KAG Server\nsv_info = Server Description\nsv_maxplayers = 16\nsv_gamemode = CTF\nsv_mapcycle = Base/Maps/mapcycle.cfg\nsv_password = \nsv_rconpassword = \nsv_register = 1\nsv_port = 50301\ncl_port = 50328\nc_write_console_to_disk = 1\nc_write_chat_to_disk = 1\nEOF\nfi\n[ -f Base/Maps/mapcycle.cfg ] || { mkdir -p Base/Maps; echo \"Base/Maps/CTF/Maps/.*.png\" > Base/Maps/mapcycle.cfg; }\n\nexit 0\n",
+      "container": "ghcr.io/pterodactyl/installers:debian",
+      "entrypoint": "bash"
+    }
+  },
+  "variables": [
+    {
+      "name": "Extra Startup Flags",
+      "description": "Appended to dedicatedserver.sh (usually leave empty).",
+      "env_variable": "STARTUP_FLAGS",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:500"
+    }
+  ]
+}
